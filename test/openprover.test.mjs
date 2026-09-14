@@ -1,8 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { OpenProverRunner } from '../src/openprover.mjs';
+import { OpenProverRunner, openProverContainerUser } from '../src/openprover.mjs';
 import { ProviderError } from '../src/providers.mjs';
 import { temporary } from './helpers.mjs';
+
+test('OpenProver uses the host identity for writable Linux bind mounts', () => {
+  assert.equal(
+    openProverContainerUser({ platform: 'linux', getuid: () => 1001, getgid: () => 127 }),
+    '1001:127',
+  );
+  assert.equal(openProverContainerUser({ platform: 'win32' }), '1000:1000');
+});
 
 test('OpenProver skips a rejected contribution and uses the next available one', async (t) => {
   const failed = [],

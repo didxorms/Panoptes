@@ -2,6 +2,12 @@
 
 Every development push has a new version. Patch = small fix; minor = feature; major = actual deployment. The first version is 0.0.0. Each entry describes the complete change since the previous pushed version.
 
+## [0.1.2] - 2026-09-14
+
+### Fixed
+
+- OpenProver containers now use the host process UID and GID on POSIX systems, allowing the private `config.json` and writable session bind mount to work in GitHub Actions without broadening file permissions. Windows keeps the image's unprivileged `1000:1000` identity.
+
 ## [0.1.1] - 2026-09-14
 
 ### Fixed

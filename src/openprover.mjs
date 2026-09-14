@@ -5,6 +5,11 @@ import { join, resolve } from 'node:path';
 import { assert, hash } from './util.mjs';
 import { openProverTemplate, processResult } from './lean.mjs';
 
+export function openProverContainerUser(host = process) {
+  if (typeof host.getuid !== 'function' || typeof host.getgid !== 'function') return '1000:1000';
+  return `${host.getuid()}:${host.getgid()}`;
+}
+
 export class OpenProverRunner {
   constructor({
     store,
@@ -13,8 +18,10 @@ export class OpenProverRunner {
     directory,
     image = 'panoptes-openprover:1.0.1',
     run = processResult,
+    containerUser = openProverContainerUser(),
   }) {
-    Object.assign(this, { store, provider, verifier, image, run });
+    assert(/^\d+:\d+$/.test(containerUser), 'Invalid OpenProver container user.');
+    Object.assign(this, { store, provider, verifier, image, run, containerUser });
     this.directory = resolve(directory, 'openprover');
     this.active = new Map();
     mkdirSync(this.directory, { recursive: true });
@@ -129,7 +136,7 @@ export class OpenProverRunner {
       '--read-only',
       '--cap-drop=ALL',
       '--security-opt=no-new-privileges',
-      '--user=1000:1000',
+      `--user=${this.containerUser}`,
       '--tmpfs',
       '/tmp:rw,nosuid,nodev,size=128m,mode=1777',
       '--mount',

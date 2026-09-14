@@ -1,6 +1,6 @@
 # Validation record
 
-Version: **v0.1.1**
+Version: **v0.1.2**
 
 Date: **2026-09-14**
 
@@ -8,7 +8,7 @@ Date: **2026-09-14**
 
 Validated on Windows with Node **22.20.0**:
 
-- 34 application tests pass. They cover classic proof assembly, OpenProver result promotion and contributor failover, exact-target checks, trust boundaries, schema migration, task recovery, budget concurrency, confirmed/failed/uncertain receipts, allocation arithmetic, API controls, encrypted keys, and version updates.
+- 35 application tests pass. They cover classic proof assembly, OpenProver result promotion, contributor failover, Linux bind-mount identity selection, exact-target checks, trust boundaries, schema migration, task recovery, budget concurrency, confirmed/failed/uncertain receipts, allocation arithmetic, API controls, encrypted keys, and version updates.
 - Version, changelog, and lockfile consistency; JavaScript syntax and formatting checks.
 - The scripted command-line simulation still completes without a key, real proof claim, or payout claim.
 
@@ -34,7 +34,7 @@ One end-to-end Docker fixture passes with no paid API call. Scripted model respo
 - concurrent Panoptes budget reservation and receipt settlement over JSON-RPC;
 - two isolated Lean checks and final exact-target promotion.
 
-The v0.1.1 integration rerun completed in about 26 seconds with the minimal runtime image.
+The v0.1.1 integration rerun completed in about 26 seconds with the minimal runtime image. GitHub Actions then exposed a Linux ownership mismatch on the writable OpenProver bind mount; v0.1.2 runs the container with the host UID and GID while retaining the private `0600` configuration file.
 
 ## Browser
 
