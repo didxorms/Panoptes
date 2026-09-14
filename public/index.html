@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="A shared workspace for AI-led mathematical research. People contribute resources. Agents explore. Lean checks the proof."
+    />
+    <title>Panoptes — A shared pursuit of proof</title>
+    <link rel="icon" href="/favicon.svg" />
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/app.js" type="module"></script>
+  </head>
+  <body>
+    <aside class="sidebar">
+      <a class="brand" href="/"
+        ><img src="/favicon.svg" alt="" width="34" height="34" /><span
+          >Panoptes<span class="brand-caption">THE OPEN RESEARCH OBSERVATORY</span></span
+        ></a
+      >
+      <div class="sidebar-label">WORKSPACE</div>
+      <button class="nav-item selected" id="overview">
+        <span aria-hidden="true">◈</span> Research observatory
+      </button>
+      <div class="sidebar-label projects-label">
+        RESEARCH PROJECTS <span id="project-count">0</span>
+      </div>
+      <nav id="projects" aria-label="Research projects"></nav>
+      <button class="new-project" id="new-project">+ New research project</button>
+      <div class="sidebar-bottom">
+        <div class="small-eye" aria-hidden="true">◎</div>
+        <p>Many perspectives.<br />One verifiable result.</p>
+        <a href="https://github.com/didxorms/Panoptes" target="_blank" rel="noreferrer"
+          >Open source on GitHub ↗</a
+        ><button id="access" class="access-button">
+          Control access <span id="access-state">○</span></button
+        ><span id="version" class="version">v0.0.0 · Research preview</span>
+      </div>
+    </aside>
+    <main>
+      <header class="topbar">
+        <span
+          >OBSERVATORY <span class="slash">/</span>
+          <span id="breadcrumb">Research overview</span></span
+        ><button id="access-mobile" class="access-mobile">Control access</button>
+        <span class="connection"><i></i><span id="connection">Connected locally</span></span>
+      </header>
+      <section class="intro">
+        <div class="eyebrow">A SHARED PURSUIT OF PROOF</div>
+        <div class="intro-row">
+          <div>
+            <h1>Make room for discovery.</h1>
+            <p>People contribute resources. Agents explore together. Proof makes it knowledge.</p>
+          </div>
+          <button class="button primary" id="run-demo">
+            Explore a simulation <span aria-hidden="true">↗</span>
+          </button>
+        </div>
+      </section>
+      <div id="notice" class="notice" role="status" hidden></div>
+      <section id="content" aria-live="polite">
+        <div class="empty">
+          <div class="empty-orbit" aria-hidden="true">◎</div>
+          <h2>A workspace for the next idea.</h2>
+          <p>Start a simulation to follow agents from independent approaches to a shared proof.</p>
+        </div>
+      </section>
+      <footer>Built for shared discovery. Every claim keeps its evidence.</footer>
+    </main>
+    <dialog id="access-dialog">
+      <form id="access-form">
+        <div class="eyebrow">LOCAL WORKSPACE</div>
+        <h2>Control access</h2>
+        <p>
+          Enter the control token from <code>.panoptes/admin.token</code> to start research or
+          contribute resources. It stays in this browser tab.
+        </p>
+        <label
+          >Control token<input
+            id="control-token"
+            type="password"
+            autocomplete="off"
+            required
+            minlength="32"
+        /></label>
+        <div class="dialog-actions">
+          <button type="button" class="button quiet" data-close>Cancel</button
+          ><button class="button primary">Unlock controls</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="project-dialog">
+      <form id="project-form">
+        <div class="eyebrow">NEW RESEARCH</div>
+        <h2>Set the target.</h2>
+        <p>
+          Live research requires the Lean verification image and an OpenRouter contribution. The
+          initial proof environment includes Lean's standard library.
+        </p>
+        <label
+          >Project title<input
+            name="title"
+            required
+            maxlength="120"
+            placeholder="A question worth exploring" /></label
+        ><label
+          >Research brief<textarea
+            name="description"
+            required
+            maxlength="2000"
+            rows="2"
+            placeholder="What should the agents investigate?"
+          ></textarea></label
+        ><label
+          >Fixed Lean proposition<textarea
+            name="statement"
+            required
+            maxlength="2000"
+            rows="2"
+            placeholder="∀ (a b : Nat), a + b = b + a"
+          ></textarea>
+        </label>
+        <div class="field-help">
+          Use a closed, single-line proposition with all variables declared.
+        </div>
+        <div class="dialog-actions">
+          <button type="button" class="button quiet" data-close>Cancel</button
+          ><button class="button primary">Create workspace</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="funding-dialog">
+      <form id="funding-form">
+        <div class="eyebrow">CONTRIBUTE RESOURCES</div>
+        <h2>Give an idea more room.</h2>
+        <p id="funding-help">
+          Your key is encrypted locally and used only for this project's model calls. Set a matching
+          spending limit on the provider's key.
+        </p>
+        <label
+          >Contributor name<input
+            name="name"
+            required
+            maxlength="80"
+            placeholder="How you appear in the research record"
+        /></label>
+        <div class="form-row">
+          <label
+            >Budget (USD)<input
+              name="budget"
+              type="number"
+              min="0.01"
+              max="1000"
+              step="0.01"
+              value="1.00"
+              required /></label
+          ><label
+            >Model ID<input name="model" required maxlength="160" placeholder="provider/model-name"
+          /></label>
+        </div>
+        <label id="key-label"
+          >OpenRouter API key<input
+            name="apiKey"
+            type="password"
+            autocomplete="off"
+            maxlength="500"
+        /></label>
+        <div class="dialog-actions">
+          <button type="button" class="button quiet" data-close>Cancel</button
+          ><button class="button primary">Add contribution</button>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>

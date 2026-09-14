@@ -1,0 +1,48 @@
+name: Checks
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  application:
+    name: Application / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.20.0'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run check
+      - run: npm run format:check
+      - run: npm test
+      - run: npm run demo
+
+  lean:
+    name: Lean / isolated kernel replay
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.20.0'
+      - name: Build pinned Lean verifier
+        run: docker build --platform linux/amd64 -f lean/Dockerfile -t panoptes-lean:4.28.0 .
+      - name: Verify true and false candidates and shared proof assembly
+        env:
+          PANOPTES_LEAN_TEST_DOCKER: '1'
+        run: npm run test:lean

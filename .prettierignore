@@ -1,0 +1,5 @@
+.panoptes/
+node_modules/
+package-lock.json
+LICENSE
+VERSION
