@@ -95,8 +95,8 @@
         <div class="eyebrow">NEW RESEARCH</div>
         <h2>Set the target.</h2>
         <p>
-          Live research requires the Lean verification image and an OpenRouter contribution. The
-          initial proof environment includes Lean's standard library.
+          OpenProver coordinates a planner and three parallel proof workers. Every submitted result
+          still has to pass the isolated Lean verifier.
         </p>
         <label
           >Project title<input
@@ -124,6 +124,12 @@
         <div class="field-help">
           Use a closed, single-line proposition with all variables declared.
         </div>
+        <label
+          >Research engine<select name="engine">
+            <option value="openprover">OpenProver · planner + parallel workers</option>
+            <option value="native">Panoptes classic · restricted proof actions</option>
+          </select></label
+        >
         <div class="dialog-actions">
           <button type="button" class="button quiet" data-close>Cancel</button
           ><button class="button primary">Create workspace</button>

@@ -78,7 +78,7 @@ export class OpenRouterProvider {
       { role: 'user', content: JSON.stringify(context) },
     ];
   }
-  async quote(funding, context) {
+  async price(funding) {
     let price = this.prices.get(funding.model);
     if (!price || Date.now() - price.at > 600_000) {
       const response = await this.fetcher('https://openrouter.ai/api/v1/models', {
@@ -102,48 +102,134 @@ export class OpenRouterProvider {
       price = { prompt: values[0], completion: values[1], request: values[2], at: Date.now() };
       this.prices.set(funding.model, price);
     }
-    const inputBound = Buffer.byteLength(JSON.stringify(this.messages(context))) + 2048;
+    return price;
+  }
+  async quoteChat(funding, { messages, maxTokens = 2400 }) {
+    const price = await this.price(funding);
+    const inputBound = Buffer.byteLength(JSON.stringify(messages)) + 2048;
     return Math.max(
       1,
-      micros(1.25 * (inputBound * price.prompt + 2400 * price.completion + price.request)),
+      micros(1.25 * (inputBound * price.prompt + maxTokens * price.completion + price.request)),
     );
   }
-  async generate({ funding, context }) {
-    const response = await this.fetcher('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      signal: AbortSignal.timeout(60_000),
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.vault.open(funding.secret)}`,
-        'X-OpenRouter-Title': 'Panoptes',
-      },
-      body: JSON.stringify({
-        model: funding.model,
-        messages: this.messages(context),
-        max_tokens: 2400,
-        response_format: { type: 'json_object' },
-        provider: { allow_fallbacks: false, require_parameters: true },
-      }),
-    });
+  async quote(funding, context) {
+    return this.quoteChat(funding, { messages: this.messages(context), maxTokens: 2400 });
+  }
+  async complete({ funding, messages, tools, maxTokens = 2400, responseFormat }) {
+    assert(Array.isArray(messages) && messages.length > 0, 'Provider messages are required.');
     assert(
-      response.ok,
-      `Provider returned HTTP ${response.status}. Cost must be reconciled before retrying.`,
+      Number.isInteger(maxTokens) && maxTokens >= 1 && maxTokens <= 8192,
+      'Invalid output limit.',
     );
-    const data = await response.json();
-    assert(
-      data.usage?.is_byok !== true,
-      'BYOK upstream charges are not supported by this accounting adapter.',
-    );
+    let response;
+    try {
+      response = await this.fetcher('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        signal: AbortSignal.timeout(120_000),
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.vault.open(funding.secret)}`,
+          'X-OpenRouter-Title': 'Panoptes',
+        },
+        body: JSON.stringify({
+          model: funding.model,
+          messages,
+          max_tokens: maxTokens,
+          ...(tools?.length ? { tools } : {}),
+          ...(responseFormat ? { response_format: responseFormat } : {}),
+          provider: { allow_fallbacks: true, require_parameters: Boolean(tools?.length) },
+          usage: { include: true },
+        }),
+      });
+    } catch (error) {
+      throw new ProviderError(`Provider connection failed: ${error.name || 'network error'}.`, {
+        chargeState: 'uncertain',
+      });
+    }
+    if (!response.ok) {
+      let data = {};
+      try {
+        if (typeof response.json === 'function') data = await response.json();
+      } catch {
+        // The HTTP status still proves that inference did not start.
+      }
+      const providerMessage =
+        typeof data?.error?.message === 'string'
+          ? data.error.message
+              .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+              .trim()
+              .slice(0, 400)
+          : '';
+      const fallback =
+        response.status === 402
+          ? 'The OpenRouter account or API key has insufficient credits. Panoptes budget is only a spending cap; add OpenRouter credits or use a free model.'
+          : 'The request was rejected before inference started.';
+      throw new ProviderError(
+        `OpenRouter rejected the call with HTTP ${response.status}: ${providerMessage || fallback}`,
+        {
+          chargeState: 'none',
+          status: response.status,
+          errorType:
+            typeof data?.error?.metadata?.error_type === 'string'
+              ? data.error.metadata.error_type
+              : '',
+        },
+      );
+    }
+    let data;
+    try {
+      data = await response.json();
+    } catch {
+      throw new ProviderError('Provider returned an unreadable receipt.', {
+        chargeState: 'uncertain',
+      });
+    }
+    if (data.usage?.is_byok === true)
+      throw new ProviderError(
+        'BYOK upstream charges are not supported by this accounting adapter.',
+        {
+          chargeState: 'uncertain',
+        },
+      );
     const cost = data.usage?.cost;
-    assert(
-      typeof cost === 'number' && Number.isFinite(cost) && cost >= 0 && cost <= 1000,
-      'Provider did not return a usable cost receipt.',
-    );
-    assert(typeof data.id === 'string', 'Provider did not return a receipt ID.');
+    if (!(typeof cost === 'number' && Number.isFinite(cost) && cost >= 0 && cost <= 1000))
+      throw new ProviderError('Provider did not return a usable cost receipt.', {
+        chargeState: 'uncertain',
+      });
+    if (typeof data.id !== 'string')
+      throw new ProviderError('Provider did not return a receipt ID.', {
+        chargeState: 'uncertain',
+      });
+    const message = data.choices?.[0]?.message || {};
     return {
-      content: data.choices?.[0]?.message?.content || '',
+      content: typeof message.content === 'string' ? message.content : '',
+      toolCalls: Array.isArray(message.tool_calls) ? message.tool_calls : [],
       costMicros: micros(cost),
       providerId: data.id,
+      finishReason: data.choices?.[0]?.finish_reason || '',
+      usage: {
+        prompt_tokens: Number(data.usage?.prompt_tokens || 0),
+        completion_tokens: Number(data.usage?.completion_tokens || 0),
+      },
+      model: typeof data.model === 'string' ? data.model : funding.model,
     };
+  }
+  async generate({ funding, context }) {
+    return this.complete({
+      funding,
+      messages: this.messages(context),
+      maxTokens: 2400,
+      responseFormat: { type: 'json_object' },
+    });
+  }
+}
+
+export class ProviderError extends Error {
+  constructor(message, { chargeState = 'uncertain', status = null, errorType = '' } = {}) {
+    super(message);
+    this.name = 'ProviderError';
+    this.chargeState = chargeState;
+    this.status = status;
+    this.errorType = errorType;
   }
 }

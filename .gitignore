@@ -10,4 +10,5 @@ playwright-report/
 *.sqlite*
 *.olean
 *.ilean
+.tmp-*
 .DS_Store

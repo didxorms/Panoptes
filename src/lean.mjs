@@ -153,9 +153,10 @@ export async function processResult(command, args, options = {}) {
     child.on('close', (code) => finish({ code: failure ? -1 : code, error: failure }));
   });
 }
-export function inspectAxioms(output) {
-  if (output.includes("'candidate' does not depend on any axioms")) return [];
-  const match = output.match(/'candidate' depends on axioms:\s*\[([^\]]*)\]/);
+export function inspectAxioms(output, theorem = 'candidate') {
+  assert(/^[A-Za-z_][A-Za-z0-9_]*$/.test(theorem), 'Invalid theorem name.');
+  if (output.includes(`'${theorem}' does not depend on any axioms`)) return [];
+  const match = output.match(new RegExp(`'${theorem}' depends on axioms:\\s*\\[([^\\]]*)\\]`));
   assert(match, 'Lean did not produce an axiom report.');
   const axioms = match[1]
     .split(',')
@@ -187,27 +188,34 @@ export class LeanVerifier {
     this.localBin = localBin;
     this.run = run;
   }
-  async verify(target, proof, dependencies = []) {
+  async verifyFiles(files, source, axiomTheorem) {
     let directory;
     try {
-      const source = sourceFor(target, proof, dependencies);
       directory = await mkdtemp(join(tmpdir(), 'panoptes-lean-'));
       // Docker's unprivileged user must be able to read the bind-mounted input.
       await chmod(directory, 0o755);
-      await writeFile(join(directory, 'Candidate.lean'), source, { mode: 0o644 });
+      for (const [filename, contents] of Object.entries(files))
+        await writeFile(join(directory, filename), contents, { mode: 0o644 });
       let compilation, replay;
       if (this.localBin) {
         // Explicitly used by trusted integration fixtures, never exposed through HTTP.
         const opts = { cwd: directory, env: { ...process.env, LEAN_PATH: directory } };
-        compilation = await this.run(
-          join(this.localBin, process.platform === 'win32' ? 'lean.exe' : 'lean'),
-          ['-o', 'Candidate.olean', 'Candidate.lean'],
-          opts,
-        );
-        if (compilation.code !== 0) throw new Error(compilation.error || compilation.output);
+        const outputs = [];
+        for (const filename of Object.keys(files)) {
+          const module = filename.slice(0, -5);
+          const item = await this.run(
+            join(this.localBin, process.platform === 'win32' ? 'lean.exe' : 'lean'),
+            ['-o', `${module}.olean`, filename],
+            opts,
+          );
+          outputs.push(item.output || '');
+          if (item.code !== 0) throw new Error(item.error || item.output);
+        }
+        compilation = { code: 0, output: outputs.join('\n') };
+        const finalModule = Object.keys(files).at(-1).slice(0, -5);
         replay = await this.run(
           join(this.localBin, process.platform === 'win32' ? 'leanchecker.exe' : 'leanchecker'),
-          ['Candidate'],
+          [finalModule],
           opts,
         );
       } else {
@@ -242,7 +250,7 @@ export class LeanVerifier {
         replay = { code: 0 };
       }
       assert(replay.code === 0, replay.error || replay.output || 'Kernel replay failed.');
-      const axioms = inspectAxioms(compilation.output);
+      const axioms = axiomTheorem ? inspectAxioms(compilation.output, axiomTheorem) : [];
       return {
         status: 'verified',
         environment: ENVIRONMENT,
@@ -265,6 +273,55 @@ export class LeanVerifier {
         );
         await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
       }
+    }
+  }
+  async verify(target, proof, dependencies = []) {
+    const source = sourceFor(target, proof, dependencies);
+    return this.verifyFiles({ 'Candidate.lean': source }, source, 'candidate');
+  }
+}
+
+export function openProverTemplate(target) {
+  return `import Std\nset_option autoImplicit false\nset_option maxHeartbeats 200000\n\ntheorem panoptes_target : (${statement(target)}) := by\n  sorry\n`;
+}
+
+export class RawLeanVerifier extends LeanVerifier {
+  async checkSource(candidate) {
+    try {
+      assert(
+        typeof candidate === 'string' && candidate.length > 0 && candidate.length <= 100_000,
+        'Lean candidate must contain 1–100000 characters.',
+      );
+      assert(!candidate.includes('\0'), 'Lean candidate contains an invalid byte.');
+      return await this.verifyFiles({ 'Candidate.lean': candidate }, candidate, null);
+    } catch (error) {
+      return {
+        status: 'rejected',
+        environment: ENVIRONMENT,
+        diagnostics: String(error.message).slice(-12_000),
+      };
+    }
+  }
+  async verifySource(target, candidate) {
+    try {
+      target = statement(target);
+      assert(
+        typeof candidate === 'string' && candidate.length > 0 && candidate.length <= 100_000,
+        'Lean candidate must contain 1–100000 characters.',
+      );
+      assert(!candidate.includes('\0'), 'Lean candidate contains an invalid byte.');
+      const final = `import Candidate\n\ntheorem panoptes_exact_target : (${target}) := panoptes_target\n\n#print axioms panoptes_exact_target\n`;
+      return await this.verifyFiles(
+        { 'Candidate.lean': candidate, 'Final.lean': final },
+        `${candidate}\n${final}`,
+        'panoptes_exact_target',
+      );
+    } catch (error) {
+      return {
+        status: 'rejected',
+        environment: ENVIRONMENT,
+        diagnostics: String(error.message).slice(-12_000),
+      };
     }
   }
 }

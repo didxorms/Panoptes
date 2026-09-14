@@ -1,8 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { Store } from '../src/store.mjs';
 import { setup, temporary, artifact } from './helpers.mjs';
+
+test('v0.0.0 databases receive additive engine and provider-error columns', (t) => {
+  const path = join(temporary(t), 'legacy.sqlite');
+  const legacy = new DatabaseSync(path);
+  legacy.exec(`
+    CREATE TABLE problems(id TEXT PRIMARY KEY,title TEXT NOT NULL,description TEXT NOT NULL,mode TEXT NOT NULL,status TEXT NOT NULL,root_id TEXT,environment TEXT NOT NULL,bounty_cents INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL);
+    CREATE TABLE calls(id TEXT PRIMARY KEY,problem_id TEXT NOT NULL,task_id TEXT NOT NULL,run_token TEXT NOT NULL,funding_id TEXT NOT NULL,reserved_micros INTEGER NOT NULL,cost_micros INTEGER,status TEXT NOT NULL,provider_id TEXT,created_at TEXT NOT NULL);
+  `);
+  legacy.close();
+  const store = new Store(path);
+  try {
+    assert.ok(store.all('PRAGMA table_info(problems)').some((row) => row.name === 'engine'));
+    assert.ok(store.all('PRAGMA table_info(calls)').some((row) => row.name === 'error'));
+  } finally {
+    store.close();
+  }
+});
 
 test('reservations prevent concurrent workers from spending the same remaining budget', (t) => {
   const { store, problem } = setup(t);
@@ -28,6 +46,37 @@ test('provider overruns are recorded in full and pause further scheduling', (t) 
   assert.equal(store.snapshot(problem.id).funding[0].spent_micros, 120);
   assert.equal(store.problem(problem.id).status, 'paused');
   assert.equal(store.claim(problem.id, 'b'), null);
+});
+
+test('OpenProver projects get one durable coordinator task and rejected calls release funds', (t) => {
+  const store = new Store();
+  t.after(() => store.close());
+  const problem = store.createProblem({
+    title: 'Parallel research',
+    description: 'Use a planner and workers.',
+    statement: 'True',
+    mode: 'live',
+    engine: 'openprover',
+  });
+  assert.equal(problem.engine, 'openprover');
+  assert.deepEqual(
+    store.all('SELECT kind FROM tasks WHERE problem_id=?', problem.id).map((row) => row.kind),
+    ['openprover'],
+  );
+  store.addFunding(
+    problem.id,
+    { name: 'Sponsor', model: 'fixture', budgetMicros: 100 },
+    'encrypted',
+  );
+  store.setStatus(problem.id, 'running');
+  const task = store.claim(problem.id, 'OpenProver');
+  const call = store.reserve(task, store.snapshot(problem.id).funding[0].id, 80);
+  store.fail(call, 'Provider rejected the call with HTTP 402.');
+  const snapshot = store.snapshot(problem.id);
+  assert.equal(snapshot.calls[0].status, 'failed');
+  assert.equal(snapshot.calls[0].error, 'Provider rejected the call with HTTP 402.');
+  assert.equal(snapshot.funding[0].reserved_micros, 0);
+  assert.equal(store.allocation(problem.id).unsettledCalls, 0);
 });
 
 test('expired leases are fenced across a database reopen', (t) => {

@@ -10,9 +10,15 @@ export function seedDemo(store) {
   return p;
 }
 export class Engine {
-  constructor(store, { demoProvider, liveProvider, demoVerifier, liveVerifier }) {
+  constructor(store, { demoProvider, liveProvider, demoVerifier, liveVerifier, openProverRunner }) {
     this.store = store;
-    Object.assign(this, { demoProvider, liveProvider, demoVerifier, liveVerifier });
+    Object.assign(this, {
+      demoProvider,
+      liveProvider,
+      demoVerifier,
+      liveVerifier,
+      openProverRunner,
+    });
     this.busy = new Set();
     this.round = 0;
   }
@@ -67,6 +73,41 @@ export class Engine {
     const heartbeat = setInterval(() => s.heartbeat(task.id, task.token), 20_000);
     heartbeat.unref();
     try {
+      if (p.engine === 'openprover') {
+        assert(this.openProverRunner, 'The OpenProver engine is not configured.');
+        const outcome = await this.openProverRunner.runTask(task);
+        s.owned(task.id, task.token);
+        if (!outcome.proof) {
+          s.finish(task, {
+            pause: true,
+            checkpoint: outcome.checkpoint,
+            feedback: outcome.summary,
+          });
+          s.event(p.id, 'openprover.checkpoint', 'OpenProver saved its research for a later run.', {
+            taskId: task.id,
+          });
+          return;
+        }
+        const artifactId = s.saveArtifact(
+          task,
+          {
+            kind: 'proof',
+            statement: s.goal(task.goal_id).statement,
+            proof: outcome.proof,
+            dependencies: [],
+            summary: outcome.summary,
+          },
+          outcome.verification,
+        );
+        if (outcome.verification.status === 'verified') s.completeGoal(task, artifactId);
+        else
+          s.finish(task, {
+            pause: true,
+            checkpoint: outcome.checkpoint,
+            feedback: outcome.verification.diagnostics,
+          });
+        return;
+      }
       // Reuse a durable accepted candidate after a crash before goal promotion.
       const existing = s.one(
         'SELECT id FROM artifacts WHERE goal_id=? AND kind=? AND status=? ORDER BY created_at LIMIT 1',
@@ -134,11 +175,15 @@ export class Engine {
       try {
         response = await provider.generate({ funding, context });
         s.settle(callId, response.costMicros, response.providerId);
-      } catch {
-        s.uncertain(callId);
+      } catch (error) {
+        if (error.chargeState === 'none') s.fail(callId, error.message);
+        else s.uncertain(callId);
         s.finish(task, {
           pause: true,
-          feedback: 'Provider call outcome is uncertain. Its budget reservation is retained.',
+          feedback:
+            error.chargeState === 'none'
+              ? error.message
+              : 'Provider call outcome is uncertain. Its budget reservation is retained.',
         });
         return;
       }
@@ -171,6 +216,7 @@ export class Engine {
       try {
         s.owned(task.id, task.token);
         s.finish(task, {
+          pause: p.engine === 'openprover',
           feedback: String(error.message).slice(0, 3000),
           checkpoint: task.checkpoint,
         });
@@ -237,10 +283,11 @@ export class Engine {
     if (this.busy.has(problemId)) return;
     this.busy.add(problemId);
     try {
-      const names = ['Atlas', 'Iris', 'Themis'];
+      const problem = this.store.problem(problemId);
+      const names = problem.engine === 'openprover' ? ['OpenProver'] : ['Atlas', 'Iris', 'Themis'];
       const tasks = [];
-      for (let i = 0; i < 3; i++) {
-        const task = this.store.claim(problemId, names[this.round++ % 3]);
+      for (let i = 0; i < names.length; i++) {
+        const task = this.store.claim(problemId, names[this.round++ % names.length]);
         if (task) tasks.push(task);
       }
       await Promise.all(tasks.map((task) => this.runTask(task)));

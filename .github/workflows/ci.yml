@@ -42,7 +42,13 @@ jobs:
           node-version: '22.20.0'
       - name: Build pinned Lean verifier
         run: docker build --platform linux/amd64 -f lean/Dockerfile -t panoptes-lean:4.28.0 .
+      - name: Build pinned OpenProver controller
+        run: docker build --platform linux/amd64 -f openprover/Dockerfile -t panoptes-openprover:1.0.1 .
       - name: Verify true and false candidates and shared proof assembly
         env:
           PANOPTES_LEAN_TEST_DOCKER: '1'
         run: npm run test:lean
+      - name: Exercise OpenProver planner, parallel workers, RPC accounting, and Lean submission
+        env:
+          PANOPTES_OPENPROVER_TEST_DOCKER: '1'
+        run: npm run test:openprover

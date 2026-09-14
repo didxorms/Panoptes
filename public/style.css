@@ -21,7 +21,8 @@ body {
 }
 button,
 input,
-textarea {
+textarea,
+select {
   font: inherit;
 }
 button,
@@ -483,6 +484,9 @@ code {
   grid-template-columns: repeat(3, 1fr);
   gap: 12px;
 }
+.worker-grid.openprover-grid {
+  grid-template-columns: 1fr;
+}
 .worker {
   border: 1px solid var(--line);
   padding: 13px;
@@ -676,7 +680,8 @@ label {
   margin-top: 18px;
 }
 input,
-textarea {
+textarea,
+select {
   width: 100%;
   padding: 11px 12px;
   border: 1px solid #d7dfcc;
@@ -688,7 +693,8 @@ textarea {
   font-size: 12px;
 }
 input:focus,
-textarea:focus {
+textarea:focus,
+select:focus {
   border-color: #829f6b;
   box-shadow: 0 0 0 3px #dfead4;
 }

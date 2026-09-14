@@ -2,6 +2,39 @@
 
 Every development push has a new version. Patch = small fix; minor = feature; major = actual deployment. The first version is 0.0.0. Each entry describes the complete change since the previous pushed version.
 
+## [0.1.2] - 2026-09-14
+
+### Fixed
+
+- OpenProver containers now use the host process UID and GID on POSIX systems, allowing the private `config.json` and writable session bind mount to work in GitHub Actions without broadening file permissions. Windows keeps the image's unprivileged `1000:1000` identity.
+
+## [0.1.1] - 2026-09-14
+
+### Fixed
+
+- OpenProver now records the safe OpenRouter error message, skips a contribution rejected before inference, and tries the next funded contributor instead of ending the whole multi-agent session on the first HTTP 402.
+- Documentation now distinguishes Panoptes spending caps from actual OpenRouter account credit and describes the `openrouter/free` option for zero-cost experiments.
+
+## [0.1.0] - 2026-09-14
+
+### Added
+
+- OpenProver 1.0.1 at pinned commit `e200251b34349ab6c34548d30319abde86cb6bc6`, coordinating a planner, three parallel workers, independent reviews, and durable research state.
+- A networkless, credential-free OpenProver controller that requests pooled OpenRouter calls and isolated Lean checks from the Panoptes host over concurrent JSON-RPC.
+- Full Lean-source development for OpenProver with a trusted exact-target wrapper, separate verifier container, kernel replay, and the existing axiom allowlist.
+- OpenProver selection and status in the dashboard, additive database migration from v0.0.0, pinned controller image, upstream license notice, and end-to-end Docker CI coverage.
+
+### Changed
+
+- Multiple contributor budgets can fund concurrent OpenProver calls; explicit provider HTTP rejections now release reservations as recorded zero-cost failures, while missing receipts remain uncertain and pause research.
+- The classic structured-action engine remains available for simulations, backward compatibility, and controlled comparisons.
+
+### Validation
+
+- 33 application tests, two real Lean Docker integration tests, and one scripted OpenProver planner/worker/reviewer/Lean integration test pass on Windows.
+- The project creation and OpenProver status UI has no runtime errors or horizontal overflow at 1440×1000 and 390×844.
+- No paid model call, public deployment, escrow, or payout transfer was performed.
+
 ## [0.0.0] - 2026-09-14
 
 ### Added

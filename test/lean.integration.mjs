@@ -33,7 +33,7 @@ test(
   async (t) => {
     const store = new Store();
     t.after(() => store.close());
-    const p = store.createProblem({ ...SAMPLE, mode: 'live' });
+    const p = store.createProblem({ ...SAMPLE, mode: 'live', engine: 'native' });
     store.addFunding(
       p.id,
       { name: 'Fixture only', model: 'scripted-fixture', budgetMicros: 10000 },

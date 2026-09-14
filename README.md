@@ -6,7 +6,7 @@ Panoptes is an open-source research workspace where AI workers explore approache
 
 [한국어 안내](docs/README.ko.md) · [Architecture](docs/ARCHITECTURE.md) · [Research design](docs/RESEARCH_ENGINE.md) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md)
 
-This is an **initial research preview**, intended for a trusted local operator. It is not yet a public resource marketplace, an autonomous solver for arbitrary open problems, or a payment service. The bundled example is a known elementary theorem.
+This is a **local research preview** for a trusted operator. OpenProver supplies the planner, parallel workers, durable whiteboard, independent review, and Lean-oriented tool loop. Panoptes supplies pooled model budgets, key custody, exact-target verification, provenance, and the operator UI. It is not yet a public resource marketplace or payment service.
 
 ![Panoptes dashboard displaying the clearly labeled scripted simulation](docs/images/dashboard.png)
 
@@ -19,8 +19,6 @@ Install Node.js **22.13 or newer**; CI uses 22.20.0. The application has no runt
 ```sh
 git clone https://github.com/didxorms/Panoptes.git
 cd Panoptes
-# Before the first PR is merged:
-git switch feat/research-engine-v0.0.0
 npm ci
 npm start
 ```
@@ -49,40 +47,42 @@ Every simulation result remains marked `simulated`. A successful simulation mean
 
 ## Use real models and Lean
 
-Live mode uses [OpenRouter](https://openrouter.ai/docs) for model calls and an isolated Lean container for verification. Docker must be available to the same local operator running Panoptes.
+Live mode uses [OpenRouter](https://openrouter.ai/docs) for model calls, [OpenProver](https://github.com/Kripner/openprover) for agent coordination, and a separate Lean container for verification. Docker must be available to the same local operator running Panoptes.
 
-1. Build the pinned verifier image. The current image contains the **Linux amd64** Lean release; on ARM hosts, Docker must support amd64 emulation.
+1. Build both images. The current images target **Linux amd64**; on ARM hosts, Docker must support amd64 emulation.
 
    ```sh
-   docker build --platform linux/amd64 -f lean/Dockerfile -t panoptes-lean:4.28.0 .
+   npm run images:build
    ```
 
 2. In the dashboard, choose **New research**. Enter a closed, single-line Lean proposition and a description. Start with a small known target such as `∀ (a b : Nat), a + b = b + a`.
-3. Choose **Contribute resources**. Enter a contributor name, an exact OpenRouter model ID, a USD budget, and a dedicated OpenRouter API key with its own provider-side spending limit. Models must support JSON-object output and the adapter's required parameters.
-4. Choose **Start research**. Panoptes first checks that the Lean verifier works, then schedules up to three workers per problem. Additional contributors may configure different models.
+3. Keep **OpenProver · planner + parallel workers** selected. Choose **Contribute resources**, then enter a contributor name, exact OpenRouter model ID, USD budget, and a dedicated OpenRouter API key with its own provider-side spending limit. Models used by workers should support tool calls.
+4. Choose **Start research**. Panoptes checks both images before spending. OpenProver coordinates one planner, up to three parallel workers, and independent reviews. Additional contributions can use different keys and models; each call selects an available funded model.
 
-Keys are encrypted in the local SQLite database. They are not included in prompts, public snapshots, or events. The operator can decrypt them; this preview does not provide decentralized key custody. Keep `.panoptes/`, `.env`, backups, and the operator token private. See [security and trust boundaries](SECURITY.md).
+Keys are encrypted in the local SQLite database. They are not included in prompts, public snapshots, events, or the OpenProver container. The networkless OpenProver controller requests model calls from the Node host over JSON lines; the host decrypts the selected key only inside the OpenRouter adapter. The operator can still decrypt keys, so this preview does not provide decentralized key custody. Keep `.panoptes/`, `.env`, backups, and the operator token private. See [security and trust boundaries](SECURITY.md).
 
-The application reserves an estimated maximum before each model call and settles the provider-reported cost afterward. This estimate is **not a hard guarantee on the provider's bill**. Use a separate provider key limit. An uncertain charge retains its reservation and pauses research; reconciliation tooling is not implemented yet. OpenRouter accounts with separately billed upstream BYOK are outside this adapter's supported accounting model. See [accounting](docs/ARCHITECTURE.md#resource-accounting).
+The Panoptes USD budget is a local spending cap, not OpenRouter credit. A paid model still requires real credit in the contributor's OpenRouter account; `openrouter/free` is available for zero-cost experiments, subject to its rate and availability limits. The application reserves an estimated maximum before each model call and settles the provider-reported cost afterward. This estimate is **not a hard guarantee on the provider's bill**. Use a separate provider key limit. A contribution rejected before inference is skipped for the rest of that OpenProver session so another funded contribution can take the call. An uncertain charge retains its reservation and pauses research; reconciliation tooling is not implemented yet. OpenRouter accounts with separately billed upstream BYOK are outside this adapter's supported accounting model. See [accounting](docs/ARCHITECTURE.md#resource-accounting).
 
 ## What this version implements
 
-- Three concurrent research slots per problem, alternative proof routes, shared closed subgoals, and automatic final proof assembly.
+- OpenProver 1.0.1 at a fixed upstream commit, with a planner, three parallel workers, independent worker review, a durable whiteboard/repository, pause/resume state, and Lean worker tools.
+- Multiple contributor budgets and model IDs in one research session; every model call is reserved and settled against the contribution that paid for it.
+- A classic Panoptes engine with three concurrent research slots, alternative proof routes, shared closed subgoals, and automatic final proof assembly.
 - A conditional bridge must be checked before its route is accepted. Every necessary lemma and the original target must then be checked separately.
 - SQLite persistence, expiring task leases, stale-result fencing, summaries, verifier feedback, artifact provenance, and restart recovery.
 - A shared notebook and dashboard for goals, proof candidates, research events, contributor budgets, and actual reported usage.
 - A provider adapter for live OpenRouter calls and a visibly separate scripted simulation.
-- Lean 4.28.0 with `Std`, a restricted structured proof format, an axiom allowlist, and a separate kernel replay of each submitted module.
+- Lean 4.28.0 with `Std`, exact-target wrapping, an axiom allowlist, and a separate kernel replay. OpenProver may develop full Lean source inside the verifier sandbox; its controller never runs generated Lean itself.
 - An API-only allocation **estimate** based on confirmed resource cost. It does not measure mathematical credit or transfer money.
-- Tests, Windows/Linux CI, actual Lean integration checks, and version preparation/push helpers.
+- Tests, Windows/Linux CI, actual Lean checks, an end-to-end OpenProver Docker fixture, and version preparation/push helpers.
 
 The replay uses Lean's own kernel against pinned, trusted standard-library imports. It is not an independently implemented theorem prover. A proof's validity still depends on the intended statement and the trusted verifier environment. [Lean's validation documentation](https://lean-lang.org/doc/reference/latest/ValidatingProofs/) describes these boundaries.
 
 ## Current limits
 
-The first proof interface imports `Std` only and accepts structured `intro`, `exact`, `apply`, `constructor`, `rfl`, `simp`, `omega`, `assumption`, `decide`, `left`, and `right` steps. It does **not** accept arbitrary Lean programs, custom imports, Mathlib projects, new definitions, or arbitrary agent tools. These constraints make the first shared-proof workflow small and reviewable, but sharply limit the mathematical problems it can tackle.
+The default OpenProver engine can generate complete Lean files and use Lean checks while researching, but the supplied environment contains `Std` only. Mathlib and semantic library search are not installed yet. The classic engine remains available with its restricted `intro`, `exact`, `apply`, `constructor`, `rfl`, `simp`, `omega`, `assumption`, `decide`, `left`, and `right` proof actions.
 
-Research stops at configured budget/queue limits and parks an attempt after twelve actions. There is no general strategy optimizer, semantic lemma deduplication, cross-project knowledge pool, remote worker protocol, user account system, escrow, or actual bounty payout. A displayed bounty is descriptive metadata, not deposited funds. The long-term [research-engine design](docs/RESEARCH_ENGINE.md) includes features beyond this implementation.
+An OpenProver session runs for at most 15 minutes at a time and stops when funded calls are unavailable; its files remain under `.panoptes/openprover/<problem-id>` for resume. There is no cross-project knowledge pool, remote contributor worker protocol, user account system, escrow, or actual bounty payout. A displayed bounty is descriptive metadata, not deposited funds. The long-term [research-engine design](docs/RESEARCH_ENGINE.md) includes features beyond this implementation.
 
 ## Development and validation
 
@@ -106,9 +106,16 @@ $env:PANOPTES_LEAN_TEST_DOCKER='1'
 npm run test:lean
 ```
 
+Exercise the pinned OpenProver planner, three parallel workers, accounting RPC, and exact Lean submission without a paid API call:
+
+```powershell
+$env:PANOPTES_OPENPROVER_TEST_DOCKER='1'
+npm run test:openprover
+```
+
 Alternatively, set `PANOPTES_LEAN_BIN` to a Lean **4.28.0** toolchain's `bin` directory for trusted local integration fixtures. This bypasses container isolation **only in the test harness**, never in HTTP live mode. Running `test:lean` without either configuration reports skipped tests. The CI Lean job explicitly requires Docker verification.
 
-These integration tests use scripted model responses and real Lean. They demonstrate collaboration and verification, not frontier model performance. A real paid-model run is a separate experiment requiring the operator's key and budget.
+These integration tests use scripted model responses and real Lean. They demonstrate orchestration, accounting, isolation, and verification, not frontier model performance. A real paid-model run is a separate experiment requiring the operator's key and budget.
 
 Copy `.env.example` to `.env` for optional configuration, then run `node --env-file=.env src/server.mjs`. Run one server process per data directory. Stop that process before backing up its directory; keep the database and master key together.
 
@@ -138,4 +145,4 @@ The push helper checks for a clean feature branch, a new sequential version, and
 
 ## License
 
-[MIT](LICENSE). Lean and dependencies retain their respective licenses.
+[MIT](LICENSE). OpenProver's MIT notice is preserved in [openprover/UPSTREAM.md](openprover/UPSTREAM.md). Lean and other dependencies retain their respective licenses.

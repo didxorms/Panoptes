@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Vault } from '../src/vault.mjs';
-import { OpenRouterProvider } from '../src/providers.mjs';
+import { OpenRouterProvider, ProviderError } from '../src/providers.mjs';
 import { temporary } from './helpers.mjs';
 
 test('vault persists its key, uses distinct nonces, and rejects modified ciphertext', (t) => {
@@ -52,8 +52,9 @@ test('provider reserves from current prices and records actual cost receipts', a
   assert.equal(generated.costMicros, 310);
   assert.equal(generated.providerId, 'receipt-id');
   const sent = JSON.parse(requests[1].options.body);
-  assert.equal(sent.provider.allow_fallbacks, false);
+  assert.equal(sent.provider.allow_fallbacks, true);
   assert.equal(sent.max_tokens, 2400);
+  assert.equal(sent.usage.include, true);
   assert.equal(requests[1].options.headers.Authorization, 'Bearer fixture-key');
   assert.ok(!requests[1].options.body.includes('fixture-key'));
 });
@@ -72,4 +73,37 @@ test('missing cost receipts, unsupported BYOK, and HTTP errors cannot be reporte
       provider.generate({ funding: { model: 'fixture', secret: 'fixture' }, context: {} }),
     );
   }
+});
+
+test('explicit HTTP rejection is releasable while a lost receipt remains uncertain', async () => {
+  const rejected = new OpenRouterProvider({
+    vault: { open: () => 'fixture' },
+    fetcher: async () => ({
+      ok: false,
+      status: 402,
+      json: async () => ({
+        error: {
+          message: 'Insufficient credits',
+          metadata: { error_type: 'payment_required' },
+        },
+      }),
+    }),
+  });
+  await assert.rejects(
+    rejected.generate({ funding: { model: 'fixture', secret: 'fixture' }, context: {} }),
+    (error) =>
+      error instanceof ProviderError &&
+      error.chargeState === 'none' &&
+      error.status === 402 &&
+      error.errorType === 'payment_required' &&
+      error.message.includes('Insufficient credits'),
+  );
+  const missing = new OpenRouterProvider({
+    vault: { open: () => 'fixture' },
+    fetcher: async () => ({ ok: true, json: async () => ({ id: 'x', usage: {} }) }),
+  });
+  await assert.rejects(
+    missing.generate({ funding: { model: 'fixture', secret: 'fixture' }, context: {} }),
+    (error) => error instanceof ProviderError && error.chargeState === 'uncertain',
+  );
 });

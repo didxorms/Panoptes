@@ -1,6 +1,6 @@
 # Implemented architecture
 
-This document describes v0.0.0. [RESEARCH_ENGINE.md](RESEARCH_ENGINE.md) is the broader design, not a list of completed features.
+This document describes v0.1.0. [RESEARCH_ENGINE.md](RESEARCH_ENGINE.md) is the broader design, not a list of completed features.
 
 ## Components
 
@@ -10,9 +10,12 @@ flowchart LR
     UI --> HTTP[HTTP control API]
     HTTP --> DB[(SQLite)]
     Engine[Research scheduler] <--> DB
+    Engine --> OP[Networkless OpenProver controller]
+    OP -->|JSON-RPC request| Engine
     Engine --> Model[OpenRouter model calls]
-    Model --> Action[Structured research action]
-    Action --> Lean[Isolated Lean compiler + kernel replay]
+    Model -->|key-free response| OP
+    OP -->|candidate source| Engine
+    Engine --> Lean[Isolated Lean compiler + kernel replay]
     Lean --> Evidence[Accepted or rejected artifact]
     Evidence --> DB
     DB --> Context[Shared evidence + summaries + feedback]
@@ -21,16 +24,18 @@ flowchart LR
 
 The runtime uses Node built-ins, SQLite, and a static browser application. Prettier is the only development package dependency. There is no bundler, Redis, job service, or separate database server.
 
-| Module              | Responsibility                                                              |
-| ------------------- | --------------------------------------------------------------------------- |
-| `src/store.mjs`     | Persisted state, invariants, leases, budgets, evidence, route readiness     |
-| `src/engine.mjs`    | Three-worker rounds, context construction, research actions, proof assembly |
-| `src/providers.mjs` | Scripted sample and real OpenRouter adapter                                 |
-| `src/lean.mjs`      | Statement validation, proof rendering, axiom policy, verifier execution     |
-| `src/vault.mjs`     | Local provider-key encryption                                               |
-| `src/server.mjs`    | Read-only views, authenticated controls, scheduling loop                    |
-| `public/`           | Dashboard, forms, shared notebook, events                                   |
-| `lean/`             | Checksum-pinned toolchain image and isolated verification entrypoint        |
+| Module               | Responsibility                                                            |
+| -------------------- | ------------------------------------------------------------------------- |
+| `src/store.mjs`      | Persisted state, invariants, leases, budgets, evidence, route readiness   |
+| `src/engine.mjs`     | Select the OpenProver or classic task path and promote checked evidence   |
+| `src/providers.mjs`  | Scripted sample and real OpenRouter adapter                               |
+| `src/openprover.mjs` | Controller lifecycle, RPC dispatch, budget selection, checkpoint handling |
+| `src/lean.mjs`       | Structured and full-source exact-target verification                      |
+| `src/vault.mjs`      | Local provider-key encryption                                             |
+| `src/server.mjs`     | Read-only views, authenticated controls, scheduling loop                  |
+| `public/`            | Dashboard, forms, shared notebook, events                                 |
+| `lean/`              | Checksum-pinned toolchain image and isolated verification entrypoint      |
+| `openprover/`        | Pinned upstream controller image, key-free runner, and license notice     |
 
 ## Fixed goals and proof routes
 
@@ -56,7 +61,13 @@ Routes cannot require their own target or create a cycle in existing goal depend
 
 ## Agent execution
 
-Each problem starts with three exploration tasks. The scheduler leases up to three tasks per round, preferring final assembly, then subgoal proofs, then exploration. The displayed worker names identify reusable slots, not persistent model identities. Model selection currently prefers configured contributors with lower spent-plus-reserved amounts whose remaining budget covers a call. Multiple keys may use the same model.
+New live projects use the OpenProver engine by default. One durable Panoptes task owns an OpenProver session. Upstream OpenProver 1.0.1 coordinates a planner, up to three parallel workers, and independent worker reviews. Its whiteboard, repository, step history, and proof candidates are bind-mounted at `.panoptes/openprover/<problem-id>` and reused after a pause or restart.
+
+The controller runs without network access or provider credentials. Its concurrent worker threads send line-delimited JSON requests over standard I/O. The Node host validates each request, atomically reserves one configured contribution, decrypts that contribution's key inside the provider adapter, calls OpenRouter, settles the receipt, and returns a key-free response. Lean tool requests take a separate path to the verifier container. A session is bounded to 15 minutes; unavailable funded capacity ends the episode and preserves its checkpoint.
+
+The classic engine remains available for compatibility and controlled comparisons:
+
+Each classic problem starts with three exploration tasks. The scheduler leases up to three tasks per round, preferring final assembly, then subgoal proofs, then exploration. The displayed worker names identify reusable slots, not persistent model identities. Both engines select configured contributors with lower spent-plus-reserved amounts whose remaining budget covers a call. Multiple keys may use the same model.
 
 Agents receive the original target, assigned goal, fixed environment, recent accepted evidence aliases, proof routes, saved summaries, notes, and verifier feedback. They return one JSON action:
 
@@ -80,15 +91,15 @@ Expired tasks re-enter the queue with a new token. Accepted proof candidates sur
 
 Pausing prevents new leases and reservations; already-started calls may finish and supply evidence. Stopping additionally fences queued, leased, and parked tasks, so late results cannot reopen the problem. Billing for already-started calls can still settle after pause, stop, or another worker's success.
 
-There is no database migration framework in this first version. Future schema changes must supply a migration before reusing an existing data directory.
+Startup performs the v0.1.0 additive migration for the problem engine and provider error receipt fields, so a v0.0.0 data directory can be reused.
 
 ## Verification
 
-The generated module imports only `Std`, disables automatic implicit binders, sets a heartbeat limit, declares dependencies, declares `candidate` with the exact assigned target, and prints its axiom dependencies. The restricted proof format does not allow raw code blocks, declarations, custom tactics, imports, comments, or executable type expressions.
+Classic proofs still use a generated `candidate` module with the exact assigned target and a restricted proof format. OpenProver receives a fixed `panoptes_target` theorem template containing one `sorry` hole. Upstream checks that a submission preserves that template, but Panoptes does not rely on that text check alone: a trusted `Final.lean` module imports the untrusted candidate and declares `panoptes_exact_target` at the stored goal type using `panoptes_target`.
 
-Live verification compiles that module, replays its submitted declarations using `leanchecker Candidate`, and checks the axiom report. Standard library imports are trusted and pinned; the checker is Lean's own kernel in a separate process, not an independent kernel implementation. This follows Lean's distinction between [replaying a module against trusted imports and replaying every import from scratch](https://lean-lang.org/doc/reference/latest/ValidatingProofs/).
+Live verification compiles the candidate and final wrapper, replays `Final` with `leanchecker`, and checks the exact target's axiom report. Standard library imports are trusted and pinned; the checker is Lean's own kernel in a separate process, not an independent kernel implementation. This follows Lean's distinction between [replaying a module against trusted imports and replaying every import from scratch](https://lean-lang.org/doc/reference/latest/ValidatingProofs/).
 
-Verification is bounded by process time/output limits and Docker resource limits. The image is built from a checksum-verified Linux amd64 toolchain. The default container has no network or writable root filesystem. The constructor's native `localBin` option exists only for trusted integration fixtures and is never selected by the server.
+Verification is bounded by process time/output limits and Docker resource limits. The image is built from a checksum-verified Linux amd64 toolchain. The container has no network, provider key, or writable root filesystem. Generated Lean is never executed in the OpenProver controller. The constructor's native `localBin` option exists only for trusted integration fixtures and is never selected by the server.
 
 The simulation verifier validates only input shape and returns `simulated`, even if the proposed proof is mathematically false. Its records are kept in separate demo problems and never imported into live research.
 
@@ -98,7 +109,7 @@ Amounts use integer microdollars (`1 USD = 1,000,000 micros`). Each call first a
 
 On response, the adapter requires a provider receipt ID and nonnegative `usage.cost`. Reported cost is charged even for invalid JSON, rejected proofs, or stale task output. Settlement is idempotent. [OpenRouter documents cost information in its usage responses](https://openrouter.ai/docs/cookbook/administration/usage-accounting).
 
-Network errors, missing receipts, and explicitly reported upstream BYOK charges leave reservations uncertain. This may conservatively retain budget for an HTTP error that actually incurred no charge. An uncertain outcome or a cost above its reservation pauses new scheduling. This version has no automated provider reconciliation or operator reconciliation endpoint. Do not erase reservations or edit the database to make an allocation look complete.
+Network errors, unreadable or missing receipts, and explicitly reported upstream BYOK charges leave reservations uncertain. An uncertain outcome or a cost above its reservation pauses new scheduling. An explicit provider HTTP rejection before a usable response is recorded as a failed zero-cost call and releases its reservation; the error is included in the snapshot and research journal. This version has no automated provider reconciliation or operator reconciliation endpoint. Do not erase reservations or edit the database to make an allocation look complete.
 
 The estimate cannot enforce a provider's actual invoice; configure a dedicated provider key limit as well. This adapter supports ordinary OpenRouter credit billing, not accounts that route to separately billed upstream keys. Such accounts must be avoided even if a particular response omits a BYOK indicator.
 
@@ -123,7 +134,7 @@ All writes require `Authorization: Bearer <control token>` and `Content-Type: ap
 | POST   | `/api/problems/:id/pause`      | Stop new scheduling                                              |
 | POST   | `/api/problems/:id/stop`       | Stop research and fence remaining tasks                          |
 
-Create a live problem with `title`, `description`, `statement`, `mode: "live"`, and optional `bountyCents`. The latter is metadata only; there is no deposit endpoint. Funding takes `name`, `model`, integer `budgetMicros`, and `apiKey` for live problems. Control actions take `{}`. HTTP errors return `{ "error": "message" }`.
+Create a live problem with `title`, `description`, `statement`, `mode: "live"`, optional `engine: "openprover" | "native"`, and optional `bountyCents`. OpenProver is the live default. The bounty is metadata only; there is no deposit endpoint. Funding takes `name`, `model`, integer `budgetMicros`, and `apiKey` for live problems. Control actions take `{}`. HTTP errors return `{ "error": "message" }`.
 
 The API intentionally has no endpoint to assert that an artifact is verified, submit an `.olean`, overwrite a goal, choose a verifier command, or authorize payment.
 
