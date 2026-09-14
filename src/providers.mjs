@@ -146,10 +146,36 @@ export class OpenRouterProvider {
         chargeState: 'uncertain',
       });
     }
-    if (!response.ok)
-      throw new ProviderError(`Provider rejected the call with HTTP ${response.status}.`, {
-        chargeState: 'none',
-      });
+    if (!response.ok) {
+      let data = {};
+      try {
+        if (typeof response.json === 'function') data = await response.json();
+      } catch {
+        // The HTTP status still proves that inference did not start.
+      }
+      const providerMessage =
+        typeof data?.error?.message === 'string'
+          ? data.error.message
+              .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+              .trim()
+              .slice(0, 400)
+          : '';
+      const fallback =
+        response.status === 402
+          ? 'The OpenRouter account or API key has insufficient credits. Panoptes budget is only a spending cap; add OpenRouter credits or use a free model.'
+          : 'The request was rejected before inference started.';
+      throw new ProviderError(
+        `OpenRouter rejected the call with HTTP ${response.status}: ${providerMessage || fallback}`,
+        {
+          chargeState: 'none',
+          status: response.status,
+          errorType:
+            typeof data?.error?.metadata?.error_type === 'string'
+              ? data.error.metadata.error_type
+              : '',
+        },
+      );
+    }
     let data;
     try {
       data = await response.json();
@@ -199,9 +225,11 @@ export class OpenRouterProvider {
 }
 
 export class ProviderError extends Error {
-  constructor(message, { chargeState = 'uncertain' } = {}) {
+  constructor(message, { chargeState = 'uncertain', status = null, errorType = '' } = {}) {
     super(message);
     this.name = 'ProviderError';
     this.chargeState = chargeState;
+    this.status = status;
+    this.errorType = errorType;
   }
 }

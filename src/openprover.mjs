@@ -27,7 +27,7 @@ export class OpenProverRunner {
     const active = this.active.get(problemId);
     if (active) await this.run('docker', ['rm', '-f', active.container]);
   }
-  async modelCall(task, params) {
+  async modelCall(task, params, rejectedFunding = new Set()) {
     const encoded = JSON.stringify(params);
     assert(encoded.length <= 1_500_000, 'OpenProver model request is too large.');
     assert(Array.isArray(params.messages) && params.messages.length > 0, 'Invalid model request.');
@@ -38,6 +38,7 @@ export class OpenProverRunner {
     );
     let lastError = 'No active contribution has enough available budget.';
     for (const funding of candidates) {
+      if (rejectedFunding.has(funding.id)) continue;
       let quote;
       try {
         quote = await this.provider.quoteChat(funding, {
@@ -72,7 +73,9 @@ export class OpenProverRunner {
       } catch (error) {
         if (error.chargeState === 'none') {
           this.store.fail(callId, error.message);
-          throw new Error(`Spending limit: ${error.message}`);
+          rejectedFunding.add(funding.id);
+          lastError = error.message;
+          continue;
         }
         this.store.uncertain(callId);
         throw error;
@@ -81,7 +84,8 @@ export class OpenProverRunner {
     throw new Error(`Spending limit reached: ${lastError}`);
   }
   async handleRequest(task, message, state) {
-    if (message.method === 'model.call') return this.modelCall(task, message.params || {});
+    if (message.method === 'model.call')
+      return this.modelCall(task, message.params || {}, state.rejectedFunding);
     const code = message.params?.code;
     assert(typeof code === 'string', 'Lean source is required.');
     if (message.method === 'lean.check') return this.verifier.checkSource(code);
@@ -137,7 +141,14 @@ export class OpenProverRunner {
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-    const state = { container, finalVerification: null, complete: null, fatal: null, logs: '' };
+    const state = {
+      container,
+      finalVerification: null,
+      complete: null,
+      fatal: null,
+      logs: '',
+      rejectedFunding: new Set(),
+    };
     this.active.set(problem.id, state);
     const send = (value) => {
       if (!child.stdin.destroyed) child.stdin.write(JSON.stringify(value) + '\n');

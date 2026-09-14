@@ -2,6 +2,13 @@
 
 Every development push has a new version. Patch = small fix; minor = feature; major = actual deployment. The first version is 0.0.0. Each entry describes the complete change since the previous pushed version.
 
+## [0.1.1] - 2026-09-14
+
+### Fixed
+
+- OpenProver now records the safe OpenRouter error message, skips a contribution rejected before inference, and tries the next funded contributor instead of ending the whole multi-agent session on the first HTTP 402.
+- Documentation now distinguishes Panoptes spending caps from actual OpenRouter account credit and describes the `openrouter/free` option for zero-cost experiments.
+
 ## [0.1.0] - 2026-09-14
 
 ### Added

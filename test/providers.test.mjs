@@ -78,11 +78,25 @@ test('missing cost receipts, unsupported BYOK, and HTTP errors cannot be reporte
 test('explicit HTTP rejection is releasable while a lost receipt remains uncertain', async () => {
   const rejected = new OpenRouterProvider({
     vault: { open: () => 'fixture' },
-    fetcher: async () => ({ ok: false, status: 402 }),
+    fetcher: async () => ({
+      ok: false,
+      status: 402,
+      json: async () => ({
+        error: {
+          message: 'Insufficient credits',
+          metadata: { error_type: 'payment_required' },
+        },
+      }),
+    }),
   });
   await assert.rejects(
     rejected.generate({ funding: { model: 'fixture', secret: 'fixture' }, context: {} }),
-    (error) => error instanceof ProviderError && error.chargeState === 'none',
+    (error) =>
+      error instanceof ProviderError &&
+      error.chargeState === 'none' &&
+      error.status === 402 &&
+      error.errorType === 'payment_required' &&
+      error.message.includes('Insufficient credits'),
   );
   const missing = new OpenRouterProvider({
     vault: { open: () => 'fixture' },
