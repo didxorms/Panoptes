@@ -1,6 +1,6 @@
 {
   "name": "panoptes",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "A shared, verifiable workspace for AI-led mathematical research.",
   "type": "module",
@@ -13,6 +13,8 @@
     "demo": "node src/cli.mjs demo",
     "test": "node --test test/*.test.mjs",
     "test:lean": "node --test test/lean.integration.mjs",
+    "test:openprover": "node --test test/openprover.integration.mjs",
+    "images:build": "docker build --platform linux/amd64 -f lean/Dockerfile -t panoptes-lean:4.28.0 . && docker build --platform linux/amd64 -f openprover/Dockerfile -t panoptes-openprover:1.0.1 .",
     "check": "node scripts/check.mjs",
     "version:next": "node scripts/version.mjs",
     "release:push": "node scripts/push.mjs",

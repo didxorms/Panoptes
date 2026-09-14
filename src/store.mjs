@@ -9,17 +9,22 @@ export class Store {
     if (file !== ':memory:') mkdirSync(dirname(file), { recursive: true });
     this.db = new DatabaseSync(file);
     this.db.exec(`PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
-      CREATE TABLE IF NOT EXISTS problems(id TEXT PRIMARY KEY,title TEXT NOT NULL,description TEXT NOT NULL,mode TEXT NOT NULL,status TEXT NOT NULL,root_id TEXT,environment TEXT NOT NULL,bounty_cents INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS problems(id TEXT PRIMARY KEY,title TEXT NOT NULL,description TEXT NOT NULL,mode TEXT NOT NULL,engine TEXT NOT NULL DEFAULT 'native',status TEXT NOT NULL,root_id TEXT,environment TEXT NOT NULL,bounty_cents INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS goals(id TEXT PRIMARY KEY,problem_id TEXT NOT NULL REFERENCES problems(id),statement TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'open',artifact_id TEXT,UNIQUE(problem_id,statement));
       CREATE TABLE IF NOT EXISTS routes(id TEXT PRIMARY KEY,problem_id TEXT NOT NULL REFERENCES problems(id),goal_id TEXT NOT NULL REFERENCES goals(id),label TEXT NOT NULL,requirements TEXT NOT NULL,bridge_id TEXT NOT NULL,status TEXT NOT NULL,route_key TEXT NOT NULL UNIQUE);
       CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY,problem_id TEXT NOT NULL REFERENCES problems(id),goal_id TEXT NOT NULL REFERENCES goals(id),route_id TEXT,kind TEXT NOT NULL,status TEXT NOT NULL,priority INTEGER NOT NULL,worker TEXT,token TEXT,lease_until INTEGER NOT NULL DEFAULT 0,steps INTEGER NOT NULL DEFAULT 0,feedback TEXT NOT NULL DEFAULT '',checkpoint TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS artifacts(id TEXT PRIMARY KEY,problem_id TEXT NOT NULL REFERENCES problems(id),goal_id TEXT NOT NULL REFERENCES goals(id),task_id TEXT NOT NULL,kind TEXT NOT NULL,statement TEXT NOT NULL,proof TEXT NOT NULL,dependencies TEXT NOT NULL,verification TEXT NOT NULL,status TEXT NOT NULL,summary TEXT NOT NULL,created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,problem_id TEXT NOT NULL REFERENCES problems(id),kind TEXT NOT NULL,message TEXT NOT NULL,data TEXT NOT NULL,created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS funding(id TEXT PRIMARY KEY,problem_id TEXT NOT NULL REFERENCES problems(id),name TEXT NOT NULL,model TEXT NOT NULL,budget_micros INTEGER NOT NULL,spent_micros INTEGER NOT NULL DEFAULT 0,reserved_micros INTEGER NOT NULL DEFAULT 0,secret TEXT,active INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS calls(id TEXT PRIMARY KEY,problem_id TEXT NOT NULL REFERENCES problems(id),task_id TEXT NOT NULL,run_token TEXT NOT NULL,funding_id TEXT NOT NULL REFERENCES funding(id),reserved_micros INTEGER NOT NULL,cost_micros INTEGER,status TEXT NOT NULL,provider_id TEXT,created_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS calls(id TEXT PRIMARY KEY,problem_id TEXT NOT NULL REFERENCES problems(id),task_id TEXT NOT NULL,run_token TEXT NOT NULL,funding_id TEXT NOT NULL REFERENCES funding(id),reserved_micros INTEGER NOT NULL,cost_micros INTEGER,status TEXT NOT NULL,provider_id TEXT,error TEXT,created_at TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS task_queue ON tasks(problem_id,status,priority);
       CREATE INDEX IF NOT EXISTS artifact_goal ON artifacts(goal_id,status);
       CREATE INDEX IF NOT EXISTS event_problem ON events(problem_id,seq);`);
+    const problemColumns = new Set(this.all('PRAGMA table_info(problems)').map((row) => row.name));
+    if (!problemColumns.has('engine'))
+      this.db.exec("ALTER TABLE problems ADD COLUMN engine TEXT NOT NULL DEFAULT 'native'");
+    const callColumns = new Set(this.all('PRAGMA table_info(calls)').map((row) => row.name));
+    if (!callColumns.has('error')) this.db.exec('ALTER TABLE calls ADD COLUMN error TEXT');
   }
   close() {
     this.db.close();
@@ -97,15 +102,18 @@ export class Store {
       target = statement(input.statement);
     const mode = input.mode || 'demo';
     assert(['demo', 'live'].includes(mode), 'Invalid mode.');
+    const engine = mode === 'demo' ? 'native' : input.engine || 'openprover';
+    assert(['native', 'openprover'].includes(engine), 'Invalid research engine.');
     const bounty = integer(input.bountyCents ?? 0, 'Bounty cents', 0, 100_000_000);
     return this.tx(() => {
       const problemId = id();
       this.run(
-        'INSERT INTO problems(id,title,description,mode,status,environment,bounty_cents,created_at) VALUES(?,?,?,?,?,?,?,?)',
+        'INSERT INTO problems(id,title,description,mode,engine,status,environment,bounty_cents,created_at) VALUES(?,?,?,?,?,?,?,?,?)',
         problemId,
         title,
         description,
         mode,
+        engine,
         'draft',
         ENVIRONMENT,
         bounty,
@@ -113,8 +121,9 @@ export class Store {
       );
       const goal = this.addGoal(problemId, target);
       this.run('UPDATE problems SET root_id=? WHERE id=?', goal.id, problemId);
-      for (let i = 0; i < 3; i++) this.addTask(problemId, goal.id, 'explore', 20);
-      this.event(problemId, 'problem.created', 'Research workspace created.', { mode });
+      if (engine === 'openprover') this.addTask(problemId, goal.id, 'openprover', 100);
+      else for (let i = 0; i < 3; i++) this.addTask(problemId, goal.id, 'explore', 20);
+      this.event(problemId, 'problem.created', 'Research workspace created.', { mode, engine });
       return this.problem(problemId);
     });
   }
@@ -218,7 +227,7 @@ export class Store {
       this.event(
         problemId,
         'task.started',
-        `${worker} started ${task.kind === 'integrate' ? 'assembling a proof' : task.kind === 'explore' ? 'an independent approach' : 'a proof task'}.`,
+        `${worker} started ${task.kind === 'openprover' ? 'an OpenProver research session' : task.kind === 'integrate' ? 'assembling a proof' : task.kind === 'explore' ? 'an independent approach' : 'a proof task'}.`,
         { taskId: task.id, goalId: task.goal_id },
       );
       return { ...task, token, worker };
@@ -576,6 +585,24 @@ export class Store {
       );
     });
   }
+  fail(callId, error) {
+    this.tx(() => {
+      const call = this.one('SELECT * FROM calls WHERE id=?', callId);
+      if (!call || call.status !== 'reserved') return;
+      const message = String(error || 'Provider rejected the call.').slice(0, 1000);
+      this.run(
+        "UPDATE calls SET status='failed',cost_micros=0,error=? WHERE id=?",
+        message,
+        callId,
+      );
+      this.run(
+        'UPDATE funding SET reserved_micros=reserved_micros-? WHERE id=?',
+        call.reserved_micros,
+        call.funding_id,
+      );
+      this.event(call.problem_id, 'provider.rejected', message, { callId });
+    });
+  }
   snapshot(problemId) {
     const problem = this.problem(problemId);
     return {
@@ -598,7 +625,7 @@ export class Store {
         problemId,
       ),
       calls: this.all(
-        'SELECT id,task_id,funding_id,reserved_micros,cost_micros,status,provider_id FROM calls WHERE problem_id=?',
+        'SELECT id,task_id,funding_id,reserved_micros,cost_micros,status,provider_id,error FROM calls WHERE problem_id=?',
         problemId,
       ),
       events: this.all(
@@ -610,7 +637,7 @@ export class Store {
   allocation(problemId) {
     const p = this.problem(problemId);
     const unsettled = this.one(
-      "SELECT COUNT(*) AS n FROM calls WHERE problem_id=? AND status!='confirmed'",
+      "SELECT COUNT(*) AS n FROM calls WHERE problem_id=? AND status IN ('reserved','uncertain')",
       problemId,
     ).n;
     const rows = this.all(

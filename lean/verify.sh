@@ -7,6 +7,12 @@ esac
 cp /input/Candidate.lean /work/Candidate.lean
 export LEAN_PATH=/work
 lean -o Candidate.olean Candidate.lean
-# Replay every submitted declaration against the pinned, trusted Std imports.
-leanchecker Candidate
+if [ -f /input/Final.lean ]; then
+  cp /input/Final.lean /work/Final.lean
+  lean -o Final.olean Final.lean
+  leanchecker Final
+else
+  # Replay every submitted declaration against the pinned, trusted Std imports.
+  leanchecker Candidate
+fi
 printf '\nPANOPTES_KERNEL_REPLAY_OK\n'

@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { seedDemo } from '../src/engine.mjs';
+import { Engine, seedDemo } from '../src/engine.mjs';
 import { SAMPLE } from '../src/providers.mjs';
-import { bridgeStatement } from '../src/store.mjs';
-import { DemoVerifier } from '../src/lean.mjs';
+import { Store, bridgeStatement } from '../src/store.mjs';
+import { DemoVerifier, ENVIRONMENT } from '../src/lean.mjs';
 import { setup, artifact } from './helpers.mjs';
 
 test('three workers share two lemmas and assemble the original target; demo never becomes a real proof', async (t) => {
@@ -145,4 +145,38 @@ test('provider timeouts pause research and retain an uncertain reservation', asy
   assert.equal(snapshot.problem.status, 'paused');
   assert.equal(snapshot.calls[0].status, 'uncertain');
   assert.equal(snapshot.funding[0].reserved_micros, 100);
+});
+
+test('a verified OpenProver result is stored as full Lean source and closes only its fixed goal', async (t) => {
+  const store = new Store();
+  t.after(() => store.close());
+  const problem = store.createProblem({
+    title: 'OpenProver promotion',
+    statement: 'True',
+    mode: 'live',
+    engine: 'openprover',
+  });
+  store.setStatus(problem.id, 'running');
+  const proof = 'import Std\ntheorem panoptes_target : True := by exact True.intro\n';
+  const engine = new Engine(store, {
+    openProverRunner: {
+      runTask: async () => ({
+        proof,
+        verification: {
+          status: 'verified',
+          environment: ENVIRONMENT,
+          diagnostics: 'Exact target and kernel replay passed.',
+          axioms: [],
+        },
+        summary: 'The planner and workers completed the proof.',
+        checkpoint: 'Complete.',
+      }),
+    },
+  });
+  await engine.tick(problem.id);
+  const snapshot = store.snapshot(problem.id);
+  assert.equal(snapshot.problem.status, 'solved');
+  assert.equal(snapshot.artifacts.length, 1);
+  assert.equal(snapshot.artifacts[0].statement, 'True');
+  assert.equal(snapshot.artifacts[0].proof, proof);
 });

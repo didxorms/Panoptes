@@ -19,7 +19,12 @@ export function temporary(t) {
 export function setup(t, mode = 'demo', target = 'True') {
   const store = new Store();
   t.after(() => store.close());
-  const problem = store.createProblem({ title: 'Test research', statement: target, mode });
+  const problem = store.createProblem({
+    title: 'Test research',
+    statement: target,
+    mode,
+    engine: 'native',
+  });
   store.setStatus(problem.id, 'running');
   const engine = new Engine(store, {
     demoProvider: new DemoProvider(),

@@ -97,12 +97,19 @@ export function createHttpServer(app, { background = true } = {}) {
                 'Live research requires a working Lean Docker image. No AI budget has been used.',
                 503,
               );
+              if (p.engine === 'openprover')
+                assert(
+                  await app.openProverRunner.ready(),
+                  'OpenProver research requires the panoptes-openprover:1.0.1 Docker image. No AI budget has been used.',
+                  503,
+                );
             }
             app.store.setStatus(problemId, 'running');
             return send(res, 200, { status: 'running' });
           }
           if (action === 'pause' || action === 'stop') {
             app.store.setStatus(problemId, action === 'pause' ? 'paused' : 'stopped');
+            await app.openProverRunner.stop(problemId);
             return send(res, 200, { ok: true });
           }
           if (action === 'funding') {
@@ -169,6 +176,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   });
   const shutdown = () => {
     server.close();
+    for (const problemId of app.openProverRunner.active.keys())
+      app.openProverRunner.stop(problemId).catch(() => {});
     const waiting = setInterval(() => {
       if (!app.engine.busy.size) {
         clearInterval(waiting);

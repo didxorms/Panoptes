@@ -7,8 +7,11 @@ import {
   inspectAxioms,
   DemoVerifier,
   LeanVerifier,
+  RawLeanVerifier,
+  openProverTemplate,
   ENVIRONMENT,
 } from '../src/lean.mjs';
+import { readFileSync } from 'node:fs';
 
 test('statement input cannot introduce commands, comments, executable code, or new axioms', () => {
   for (const value of [
@@ -92,4 +95,30 @@ test('Docker verification uses isolation controls, demands replay marker, and re
   assert.ok(calls[0].args.includes('--read-only'));
   assert.ok(calls[0].args.includes('--cap-drop=ALL'));
   assert.deepEqual(calls[1].args.slice(0, 2), ['rm', '-f']);
+});
+
+test('OpenProver proofs are wrapped against the exact target before isolated kernel replay', async () => {
+  let candidate, final;
+  const verifier = new RawLeanVerifier({
+    run: async (command, args) => {
+      if (command === 'docker' && args[0] === 'run') {
+        const mount = args[args.indexOf('--mount') + 1];
+        const directory = mount.match(/source=(.*),target=\/input,readonly$/)[1];
+        candidate = readFileSync(`${directory}/Candidate.lean`, 'utf8');
+        final = readFileSync(`${directory}/Final.lean`, 'utf8');
+        return {
+          code: 0,
+          output:
+            "'panoptes_exact_target' does not depend on any axioms\nPANOPTES_KERNEL_REPLAY_OK",
+        };
+      }
+      return { code: 0, output: '' };
+    },
+  });
+  const source = openProverTemplate('True').replace('sorry', 'exact True.intro');
+  const result = await verifier.verifySource('True', source);
+  assert.equal(result.status, 'verified', result.diagnostics);
+  assert.equal(candidate, source);
+  assert.match(final, /theorem panoptes_exact_target : \(True\) := panoptes_target/);
+  assert.match(final, /#print axioms panoptes_exact_target/);
 });

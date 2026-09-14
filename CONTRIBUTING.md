@@ -15,7 +15,7 @@ npm run format:check
 npm test
 ```
 
-Changes to proof generation, imports, artifact acceptance, route integration, or the verifier also require the [real Lean integration tests](README.md#development-and-validation). Keep failed-candidate and simulation-boundary checks. Do not add real provider keys or paid API calls to tests.
+Changes to proof generation, imports, artifact acceptance, route integration, OpenProver RPC, or the verifier also require the [real Docker integration tests](README.md#development-and-validation). Keep exact-target, failed-candidate, cost-receipt, and simulation-boundary checks. Do not add real provider keys or paid API calls to tests.
 
 Use readable modules and meaningful tests for invariants. The server's live proof path must keep its sandbox. An AI result cannot mark itself verified, change the original target, or select the environment. A useful counterexample search is not a formal disproof until a negation proof passes verification.
 
